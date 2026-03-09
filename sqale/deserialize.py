@@ -235,8 +235,8 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--input",
-        required=True,
-        help="Local parquet/arrow file, directory, or HuggingFace repo ID.",
+        default="trl-lab/SQaLe_2",
+        help="Local parquet/arrow file, directory, or HuggingFace repo ID (default: trl-lab/SQaLe_2).",
     )
     p.add_argument(
         "--output",

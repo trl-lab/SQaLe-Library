@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SQaLe"
+version = "0.1.0"
+description = "Deserialize the SQaLe dataset into populated SQLite databases."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+    "tqdm",
+    "pyarrow",         # needed by pandas for parquet support
+    "datasets",        # HuggingFace datasets (also handles .arrow files)
+]
+
+[project.scripts]
+sqale-extract = "sqale.deserialize:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sqale*"]

@@ -52,16 +52,29 @@ def deserialize_sqale(
     """
     df = _load_dataset(file_path)
 
-    # Keep only the first occurrence of each schema_id to avoid duplicate work
-    df = df.drop_duplicates(subset=["schema id"])
-    if limit is not None:
-        df = df.iloc[:limit]
-
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     results = []
-    for _, row in tqdm(df.iterrows(), total=len(df), desc="Schemas"):
+    if limit is not None:
+        seen_schema_ids: set[str] = set()
+        schemas: list = []
+        with tqdm(total=limit, desc="Gathering schemas") as pbar:
+            for _, row in df.iterrows():
+                schema_id = str(row.get("schema id") or "unknown")
+                if schema_id not in seen_schema_ids:
+                    seen_schema_ids.add(schema_id)
+                    schemas.append(row)
+                    pbar.update(1)
+                    if len(schemas) >= limit:
+                        break
+        rows_iter = tqdm(schemas, total=len(schemas), desc="Schemas")
+    else:
+        print("No limit set — deduplicating the full dataset, this might take a bit...")
+        df = df.drop_duplicates(subset=["schema id"])
+        rows_iter = tqdm((row for _, row in df.iterrows()), total=len(df), desc="Schemas")
+
+    for row in rows_iter:
         schema_id = str(row.get("schema id") or "unknown")
         full_schema = row.get("Full schema") or ""
         schema_content_raw = row.get("Schema content") or "{}"

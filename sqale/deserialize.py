@@ -50,29 +50,34 @@ def deserialize_sqale(
         rows_per_table – dict mapping table_name → number of rows inserted
         error         – None on success, error message string on failure
     """
-    df = _load_dataset(file_path)
+    dataset = _load_dataset(file_path)
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    results = []
-    if limit is not None:
-        seen_schema_ids: set[str] = set()
-        schemas: list = []
-        with tqdm(total=limit, desc="Gathering schemas") as pbar:
-            for _, row in df.iterrows():
-                schema_id = str(row.get("schema id") or "unknown")
-                if schema_id not in seen_schema_ids:
-                    seen_schema_ids.add(schema_id)
-                    schemas.append(row)
-                    pbar.update(1)
-                    if len(schemas) >= limit:
-                        break
-        rows_iter = tqdm(schemas, total=len(schemas), desc="Schemas")
+    # Normalise to a plain iterable of dict-like rows regardless of source type
+    if isinstance(dataset, pd.DataFrame):
+        row_iter = (row for _, row in dataset.iterrows())
     else:
-        print("No limit set — deduplicating the full dataset, this might take a bit...")
-        df = df.drop_duplicates(subset=["schema id"])
-        rows_iter = tqdm((row for _, row in df.iterrows()), total=len(df), desc="Schemas")
+        # HuggingFace IterableDataset – already iterable of dicts
+        row_iter = iter(dataset)
+
+    results = []
+    seen_schema_ids: set[str] = set()
+    schemas: list = []
+
+    gather_limit = limit  # None means "all unique schemas"
+    with tqdm(total=gather_limit, desc="Gathering schemas") as pbar:
+        for row in row_iter:
+            schema_id = str(row.get("schema id") or "unknown")
+            if schema_id not in seen_schema_ids:
+                seen_schema_ids.add(schema_id)
+                schemas.append(row)
+                pbar.update(1)
+                if gather_limit is not None and len(schemas) >= gather_limit:
+                    break
+
+    rows_iter = tqdm(schemas, total=len(schemas), desc="Schemas")
 
     for row in rows_iter:
         schema_id = str(row.get("schema id") or "unknown")
@@ -120,8 +125,13 @@ def _parse_schema_content(raw) -> dict[str, list[dict]]:
     return {}
 
 
-def _load_dataset(file_path: str) -> pd.DataFrame:
-    """Load the dataset from a local file/directory or a HuggingFace repo ID."""
+def _load_dataset(file_path: str):
+    """Load the dataset from a local file/directory or a HuggingFace repo ID.
+
+    For local files returns a pandas DataFrame.
+    For HuggingFace repo IDs returns a streaming IterableDataset so nothing
+    is written to disk.
+    """
     p = Path(file_path)
     if p.exists():
         if p.is_dir():
@@ -134,11 +144,10 @@ def _load_dataset(file_path: str) -> pd.DataFrame:
             return pd.concat(frames, ignore_index=True)
         return _read_single_file(p)
 
-    # Fall back to HuggingFace
+    # Fall back to HuggingFace – stream so we never download the full dataset
     try:
         from datasets import load_dataset  # type: ignore
-        ds = load_dataset(file_path, split="train")
-        return ds.to_pandas()
+        return load_dataset(file_path, split="train", streaming=True)
     except Exception as exc:
         raise ValueError(
             f"Could not load dataset from '{file_path}': {exc}"

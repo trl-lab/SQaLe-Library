@@ -1,5 +1,6 @@
 """
-Deserialize the SQaLe dataset (cwolff/whatever_100k) into SQLite .db files.
+Deserialize the SQaLe dataset (cwolff/data_work_in_progress) into SQLite .db files
+and expose question-level benchmark data.
 
 Each unique schema in the dataset is materialized as a .db file populated
 with the synthetic data stored in the 'Schema content' column.
@@ -19,11 +20,11 @@ from tqdm import tqdm
 
 
 # ---------------------------------------------------------------------------
-# Core deserialization
+# Public API
 # ---------------------------------------------------------------------------
 
 def deserialize_sqale(
-    file_path: str,
+    file_path: str = "cwolff/data_work_in_progress",
     output_dir: str = "deserialized_dbs",
     limit: Optional[int] = None,
 ) -> list[dict]:
@@ -35,7 +36,7 @@ def deserialize_sqale(
     ----------
     file_path:
         Path to a local parquet/arrow file, a directory of such files, or a
-        HuggingFace dataset repo ID (e.g. 'cwolff/whatever_100k').
+        HuggingFace dataset repo ID (default: 'cwolff/data_work_in_progress').
     output_dir:
         Directory where the .db files will be written (created if missing).
     limit:
@@ -44,29 +45,24 @@ def deserialize_sqale(
     Returns
     -------
     list of dicts, each containing:
-        schema_id     – original schema id from the dataset
-        db_path       – absolute path to the created .db file
-        tables        – list of table names found in the DDL
+        schema_id      – original schema id from the dataset
+        db_path        – absolute path to the created .db file
+        tables         – list of table names found in the DDL
         rows_per_table – dict mapping table_name → number of rows inserted
-        error         – None on success, error message string on failure
+        error          – None on success, error message string on failure
     """
     dataset = _load_dataset(file_path)
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Normalise to a plain iterable of dict-like rows regardless of source type
-    if isinstance(dataset, pd.DataFrame):
-        row_iter = (row for _, row in dataset.iterrows())
-    else:
-        # HuggingFace IterableDataset – already iterable of dicts
-        row_iter = iter(dataset)
+    row_iter = _iter_rows(dataset)
 
     results = []
     seen_schema_ids: set[str] = set()
     schemas: list = []
 
-    gather_limit = limit  # None means "all unique schemas"
+    gather_limit = limit
     with tqdm(total=gather_limit, desc="Gathering schemas") as pbar:
         for row in row_iter:
             schema_id = str(row.get("schema id") or "unknown")
@@ -77,14 +73,12 @@ def deserialize_sqale(
                 if gather_limit is not None and len(schemas) >= gather_limit:
                     break
 
-    rows_iter = tqdm(schemas, total=len(schemas), desc="Schemas")
-
-    for row in rows_iter:
+    for row in tqdm(schemas, total=len(schemas), desc="Schemas"):
         schema_id = str(row.get("schema id") or "unknown")
         full_schema = row.get("Full schema") or ""
         schema_content_raw = row.get("Schema content") or "{}"
 
-        schema_content = _parse_schema_content(schema_content_raw)
+        schema_content = _parse_json_field(schema_content_raw, default={})
 
         safe_id = re.sub(r"[^\w\-]", "_", schema_id)
         db_path = out / f"{safe_id}.db"
@@ -107,22 +101,80 @@ def deserialize_sqale(
     return results
 
 
+def load_questions(
+    file_path: str = "cwolff/data_work_in_progress",
+    limit: Optional[int] = None,
+) -> list[dict]:
+    """
+    Load question-level benchmark data from the SQaLe dataset.
+
+    Each row in the dataset represents one question linked to a database schema.
+    Unlike :func:`deserialize_sqale`, this function does *not* deduplicate by
+    schema_id — it returns one entry per question.
+
+    Parameters
+    ----------
+    file_path:
+        Path to a local parquet/arrow file, a directory of such files, or a
+        HuggingFace dataset repo ID (default: 'cwolff/data_work_in_progress').
+    limit:
+        Maximum number of questions to return.  None means return all.
+
+    Returns
+    -------
+    list of dicts, each containing:
+        question_id      – unique question identifier (e.g. 'q_0000000')
+        schema_id        – associated schema id
+        difficulty       – difficulty label (e.g. 'simple', 'moderate', 'challenging')
+        questions        – dict with question formulations keyed by style
+                           (e.g. 'verbose (original)', 'short_high_level', 'casual')
+        sql              – gold SQL statement
+        relevant_tables  – list of relevant table names
+        execution_result – expected query result (list of rows)
+    """
+    dataset = _load_dataset(file_path)
+
+    results = []
+    for row in tqdm(_iter_rows(dataset), desc="Loading questions"):
+        results.append({
+            "question_id": str(row.get("question id") or ""),
+            "schema_id": str(row.get("schema id") or ""),
+            "difficulty": str(row.get("difficulty") or ""),
+            "questions": _parse_json_field(row.get("questions"), default={}),
+            "sql": str(row.get("sql statament") or ""),
+            "relevant_tables": _parse_json_field(row.get("relevant tables"), default=[]),
+            "execution_result": _parse_json_field(row.get("execution_result"), default=[]),
+        })
+        if limit is not None and len(results) >= limit:
+            break
+
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _parse_schema_content(raw) -> dict[str, list[dict]]:
-    """Parse the Schema content field into a dict[table → list[row]]."""
-    if isinstance(raw, dict):
+def _iter_rows(dataset):
+    """Normalise dataset to a plain iterable of dict-like rows."""
+    if isinstance(dataset, pd.DataFrame):
+        return (row for _, row in dataset.iterrows())
+    return iter(dataset)
+
+
+def _parse_json_field(raw, *, default):
+    """Parse a JSON string field; return *default* on failure."""
+    if isinstance(raw, (dict, list)):
         return raw
     if isinstance(raw, str) and raw:
         try:
             parsed = json.loads(raw)
-            if isinstance(parsed, dict):
+            if isinstance(parsed, type(default)) or default is None:
                 return parsed
+            return parsed
         except (json.JSONDecodeError, TypeError):
             pass
-    return {}
+    return default
 
 
 def _load_dataset(file_path: str):
@@ -144,7 +196,6 @@ def _load_dataset(file_path: str):
             return pd.concat(frames, ignore_index=True)
         return _read_single_file(p)
 
-    # Fall back to HuggingFace – stream so we never download the full dataset
     try:
         from datasets import load_dataset  # type: ignore
         return load_dataset(file_path, split="train", streaming=True)
@@ -164,7 +215,6 @@ def _read_single_file(path: Path) -> pd.DataFrame:
 
 
 def _split_ddl(ddl: str) -> list[str]:
-    """Split a DDL string into individual statements."""
     return [s.strip() for s in ddl.split(";") if s.strip()]
 
 
@@ -174,8 +224,8 @@ def _materialize_db(
     schema_content: dict[str, list[dict]],
 ) -> dict[str, int]:
     """
-    Create a SQLite database at *db_path*, execute the DDL to build the
-    schema, then insert all rows from *schema_content*.
+    Create a SQLite database at *db_path*, execute the DDL, then insert all
+    rows from *schema_content*.
 
     Returns a mapping of table_name → number of rows inserted.
     """
@@ -191,7 +241,7 @@ def _materialize_db(
             try:
                 conn.execute(stmt)
             except sqlite3.Error:
-                pass  # Ignore unsupported syntax / duplicate table errors
+                pass
 
         rows_per_table: dict[str, int] = {}
         for table, table_rows in schema_content.items():
@@ -257,8 +307,8 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--input",
-        default="trl-lab/SQaLe_2",
-        help="Local parquet/arrow file, directory, or HuggingFace repo ID (default: trl-lab/SQaLe_2).",
+        default="cwolff/data_work_in_progress",
+        help="Local parquet/arrow file, directory, or HuggingFace repo ID (e.g. cwolff/data_work_in_progress).",
     )
     p.add_argument(
         "--output",

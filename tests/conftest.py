@@ -33,6 +33,24 @@ SAMPLE_CONTENT = {
     ],
 }
 
+SAMPLE_QUESTIONS = [
+    {
+        "verbose (original)": "How many users are there?",
+        "short_high_level": "Count all users.",
+        "casual": "How many users?",
+    },
+    {
+        "verbose (original)": "What is the total order amount?",
+        "short_high_level": "Sum all order amounts.",
+        "casual": "Total orders?",
+    },
+]
+
+SAMPLE_SQLS = [
+    "SELECT COUNT(*) FROM users",
+    "SELECT SUM(amount) FROM orders",
+]
+
 
 @pytest.fixture()
 def sample_parquet(tmp_path: Path) -> Path:
@@ -43,6 +61,13 @@ def sample_parquet(tmp_path: Path) -> Path:
                 "schema id": "schema_001",
                 "Full schema": SAMPLE_DDL,
                 "Schema content": json.dumps(SAMPLE_CONTENT),
+                "question id": "q_0000001",
+                "questions": json.dumps(SAMPLE_QUESTIONS[0]),
+                "sql statament": SAMPLE_SQLS[0],
+                "difficulty": "simple",
+                "relevant tables": json.dumps(["users"]),
+                "number of relevant tables": 1,
+                "execution_result": json.dumps([[2]]),
             },
             {
                 "schema id": "schema_002",
@@ -50,6 +75,13 @@ def sample_parquet(tmp_path: Path) -> Path:
                 "Schema content": json.dumps(
                     {"things": [{"id": 1, "label": "foo"}, {"id": 2, "label": "bar"}]}
                 ),
+                "question id": "q_0000002",
+                "questions": json.dumps(SAMPLE_QUESTIONS[1]),
+                "sql statament": SAMPLE_SQLS[1],
+                "difficulty": "moderate",
+                "relevant tables": json.dumps(["orders"]),
+                "number of relevant tables": 1,
+                "execution_result": json.dumps([[149.49]]),
             },
         ]
     )

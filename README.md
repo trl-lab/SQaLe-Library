@@ -1,5 +1,7 @@
 # SQaLe
 
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/sqale?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/sqale)
+
 A Python utility for deserializing the [SQaLe dataset](https://huggingface.co/datasets/trl-lab/SQaLe_2) into populated SQLite databases.
 
 Each unique schema in the dataset is materialized as a `.db` file and populated with the synthetic row data stored alongside it — ready to use for SQL benchmarking, evaluation, or development.

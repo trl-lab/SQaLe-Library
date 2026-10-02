@@ -4,17 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "SQaLe"
-version = "0.1.5"
-description = "Deserialize the SQaLe dataset into populated SQLite databases."
+version = "0.2.0"
+description = "Load the SQaLe text-to-SQL dataset and materialize its databases as populated SQLite files."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
 dependencies = [
-    "pandas",
     "tqdm",
-    "pyarrow",         # needed by pandas for parquet support
-    "datasets",        # HuggingFace datasets (also handles .arrow files)
+    "pyarrow",         # reads parquet files in batches
+    "huggingface_hub", # downloads dataset shards into the HuggingFace cache
+    "datasets",        # .arrow files and repos without split-named shards
 ]
+
+[project.optional-dependencies]
+test = ["pytest", "pandas"]
+
+[project.urls]
+Homepage = "https://trl-lab.github.io/sqale"
+Repository = "https://github.com/trl-lab/SQaLe-Library"
+Questions = "https://huggingface.co/datasets/trl-lab/sqale2_queries"
+Databases = "https://huggingface.co/datasets/trl-lab/sqale2_schemas"
 
 [project.scripts]
 sqale-extract = "sqale.deserialize:main"
